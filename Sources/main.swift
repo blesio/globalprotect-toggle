@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let startupCheckbox = NSButton(checkboxWithTitle: "Run GlobalProtect at login", target: nil, action: nil)
     private let startupHint = NSTextField(wrappingLabelWithString: "Checking startup preference…")
     private let permissionsButton = NSButton(title: "Permissions…", target: nil, action: nil)
+    private var appManagementWasDenied = false
     private var permissionSheet: NSAlert?
     private let permissionPreview = CommandLine.arguments.contains("--permissions-preview")
     private let progress = NSProgressIndicator()
@@ -64,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             permissionsButton.topAnchor.constraint(equalTo: footer.bottomAnchor, constant: 12), permissionsButton.centerXAnchor.constraint(equalTo: root.centerXAnchor)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        let needsSetup = PermissionAccess.needsFirstRunSetup(granted: PermissionAccess.isGranted, presented: UserDefaults.standard.bool(forKey: PermissionAccess.onboardingKey), preview: preview)
+        let needsSetup = PermissionAccess.needsFirstRunSetup(granted: PermissionAccess.isGranted, presented: UserDefaults.standard.bool(forKey: PermissionAccess.onboardingKey), preview: preview, appManagementReview: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27)
         if permissionPreview || needsSetup {
             showPermissions()
             refresh()
@@ -84,26 +85,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updatePermissionStatus() {
         let granted = !permissionPreview && PermissionAccess.isGranted
-        permissionsButton.title = granted ? "Permissions…" : "Allow \(PermissionAccess.settingsName)…"
-        permissionsButton.toolTip = granted ? "Permission to disconnect GlobalProtect is enabled." : "Required to click Disconnect and read GlobalProtect’s status."
+        permissionsButton.title = "Permissions…"
+        permissionsButton.toolTip = "\(PermissionAccess.settingsName): \(granted ? "enabled" : "not enabled"). App Management: check in System Settings."
     }
     @objc private func showPermissions() {
         guard permissionSheet == nil, !busy else { return }
         let granted = !permissionPreview && PermissionAccess.isGranted
         if !preview && !permissionPreview { UserDefaults.standard.set(true, forKey: PermissionAccess.onboardingKey) }
         let alert = NSAlert()
-        alert.messageText = granted ? "GlobalProtect permissions" : "Allow \(PermissionAccess.settingsName)"
-        alert.informativeText = granted
-            ? "\(PermissionAccess.settingsName) is enabled. GlobalProtect Toggle can click Disconnect and read the client’s status."
-            : "GlobalProtect Toggle needs this permission to click Disconnect and read GlobalProtect’s connection status.\n\nOpen Privacy & Security → \(PermissionAccess.settingsName) and enable GlobalProtect Toggle. If it is missing, use + to add this app. Then return here and click the toggle.\n\nNo VPN or startup setting is changed during setup."
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: granted ? "Done" : "Later")
+        alert.messageText = "GlobalProtect permissions"
+        let appManagementStatus = appManagementWasDenied ? "An operation was denied. Check this permission in System Settings." : "Check in System Settings. macOS does not provide a supported status query."
+        alert.informativeText = "\(PermissionAccess.settingsName): \(granted ? "Enabled" : "Not enabled")\nNeeded to click Disconnect and read GlobalProtect’s connection status.\n\nApp Management: \(appManagementStatus)\nEnable it if macOS prevents GlobalProtect Toggle from managing GlobalProtect.\n\nIn each settings pane, enable GlobalProtect Toggle. Use + to add this app if it is missing. Then return here and retry."
+        alert.addButton(withTitle: PermissionAccess.settingsName)
+        alert.addButton(withTitle: "App Management")
+        alert.addButton(withTitle: "Done")
         permissionSheet = alert
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             self.permissionSheet = nil
-            if response == .alertFirstButtonReturn && !self.permissionPreview { PermissionAccess.requestAndOpenSettings() }
+            if !self.permissionPreview {
+                if response == .alertFirstButtonReturn { PermissionAccess.requestAndOpenSettings() }
+                else if response == .alertSecondButtonReturn { PermissionAccess.openSettings(appManagement: true) }
+            }
             self.updatePermissionStatus()
+        }
+    }
+    private func showOperationError(_ error: Error, title: String) {
+        let denied = PermissionAccess.isPermissionDenial(error.localizedDescription)
+        if denied { appManagementWasDenied = true }
+        let alert = NSAlert(); alert.messageText = title; alert.alertStyle = .warning
+        alert.informativeText = error.localizedDescription
+        if denied {
+            alert.informativeText += "\n\nmacOS denied the operation. Check Privacy & Security → App Management and allow GlobalProtect Toggle, then retry. Other administrator restrictions can also deny an operation."
+            alert.addButton(withTitle: "App Management Settings")
+        }
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window) { response in
+            if denied && response == .alertFirstButtonReturn { PermissionAccess.openSettings(appManagement: true) }
         }
     }
     private func display(_ state: ServiceState) {
@@ -130,8 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .success(let state):
                     self.displayStartup(state)
                 case .failure(let error):
-                    let alert = NSAlert(); alert.messageText = "Could not save startup preference"; alert.informativeText = error.localizedDescription; alert.alertStyle = .warning
-                    alert.beginSheetModal(for: self.window)
+                    self.showOperationError(error, title: "Could not save startup preference")
                     self.refresh()
                 }
             }
@@ -164,8 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.refresh()
                 case .failure(let error):
                     self.status.stringValue = "Could not toggle GlobalProtect"
-                    let alert = NSAlert(); alert.messageText = "Could not toggle GlobalProtect"; alert.informativeText = error.localizedDescription; alert.alertStyle = .warning
-                    alert.beginSheetModal(for: self.window)
+                    self.showOperationError(error, title: "Could not toggle GlobalProtect")
                     self.refresh()
                 }
             }

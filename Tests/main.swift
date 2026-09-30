@@ -110,3 +110,11 @@ check(!PermissionAccess.needsFirstRunSetup(granted: true, presented: false, prev
 check(!PermissionAccess.needsFirstRunSetup(granted: false, presented: true, preview: false), "first-run prompt repeated")
 check(!PermissionAccess.needsFirstRunSetup(granted: false, presented: false, preview: true), "preview requested permission")
 print("PASS: macOS permission names and first-run setup policy")
+
+check(PermissionAccess.needsFirstRunSetup(granted: true, presented: false, preview: false, appManagementReview: true), "App Management review skipped with device access granted")
+check(!PermissionAccess.needsFirstRunSetup(granted: true, presented: true, preview: false, appManagementReview: true), "App Management review repeated")
+check(PermissionAccess.settingsURL(appManagement: true).absoluteString.hasSuffix("Privacy_AppBundles"), "wrong App Management route")
+check(PermissionAccess.settingsURL(appManagement: false).absoluteString.hasSuffix("Privacy_Accessibility"), "wrong Device Control route")
+check(PermissionAccess.isPermissionDenial("Load failed: 1: Operation not permitted"), "denial not recognized")
+check(!PermissionAccess.isPermissionDenial("Missing GlobalProtect files"), "unrelated error treated as permissions")
+print("PASS: App Management setup route and denied-operation guidance")

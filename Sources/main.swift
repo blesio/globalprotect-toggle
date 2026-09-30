@@ -7,6 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let button = NSButton(title: "Toggle GlobalProtect", target: nil, action: nil)
     private let startupCheckbox = NSButton(checkboxWithTitle: "Run GlobalProtect at login", target: nil, action: nil)
     private let startupHint = NSTextField(wrappingLabelWithString: "Checking startup preference…")
+    private let permissionsButton = NSButton(title: "Permissions…", target: nil, action: nil)
+    private var permissionSheet: NSAlert?
+    private let permissionPreview = CommandLine.arguments.contains("--permissions-preview")
     private let progress = NSProgressIndicator()
     private let controller = ServiceController(disconnect: VPNDisconnector.disconnect)
     private var busy = false
@@ -19,10 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSMenuItem(); menu.addItem(item)
         let appMenu = NSMenu(); item.submenu = appMenu
         appMenu.addItem(withTitle: "About GlobalProtect Toggle", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let permissionsMenu = appMenu.addItem(withTitle: "Permissions…", action: #selector(showPermissions), keyEquivalent: "")
+        permissionsMenu.target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit GlobalProtect Toggle", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         NSApp.mainMenu = menu
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 340), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 375), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "GlobalProtect Toggle"
         window.isReleasedWhenClosed = false
         let root = NSView(); window.contentView = root
@@ -38,10 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startupCheckbox.target = self; startupCheckbox.action = #selector(changeStartup)
         startupCheckbox.allowsMixedState = true; startupCheckbox.isEnabled = false
         startupHint.font = .systemFont(ofSize: 11); startupHint.textColor = .secondaryLabelColor; startupHint.alignment = .center
+        permissionsButton.bezelStyle = .rounded; permissionsButton.controlSize = .small
+        permissionsButton.target = self; permissionsButton.action = #selector(showPermissions)
+        updatePermissionStatus()
         progress.style = .spinning; progress.controlSize = .small; progress.isDisplayedWhenStopped = false
         let footer = NSTextField(wrappingLabelWithString: "Turning off disconnects the VPN first, then unloads both LaunchAgents.")
         footer.font = .systemFont(ofSize: 11); footer.textColor = .secondaryLabelColor; footer.alignment = .center
-        for view in [icon, status, subtitle, button, progress, startupCheckbox, startupHint, footer] {
+        for view in [icon, status, subtitle, button, progress, startupCheckbox, startupHint, footer, permissionsButton] {
             view.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(view)
         }
         NSLayoutConstraint.activate([
@@ -52,21 +60,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             progress.centerYAnchor.constraint(equalTo: button.centerYAnchor), progress.leadingAnchor.constraint(equalTo: button.trailingAnchor, constant: 10),
             startupCheckbox.topAnchor.constraint(equalTo: button.bottomAnchor, constant: 16), startupCheckbox.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             startupHint.topAnchor.constraint(equalTo: startupCheckbox.bottomAnchor, constant: 6), startupHint.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20), startupHint.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            footer.topAnchor.constraint(equalTo: startupHint.bottomAnchor, constant: 16), footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20), footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20)
+            footer.topAnchor.constraint(equalTo: startupHint.bottomAnchor, constant: 16), footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20), footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            permissionsButton.topAnchor.constraint(equalTo: footer.bottomAnchor, constant: 12), permissionsButton.centerXAnchor.constraint(equalTo: root.centerXAnchor)
         ])
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        if preview { refresh() } else { toggle() }
-        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.refresh() }
+        let needsSetup = PermissionAccess.needsFirstRunSetup(granted: PermissionAccess.isGranted, presented: UserDefaults.standard.bool(forKey: PermissionAccess.onboardingKey), preview: preview)
+        if permissionPreview || needsSetup {
+            showPermissions()
+            refresh()
+        } else if preview { refresh() } else { toggle() }
+        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            self?.updatePermissionStatus(); self?.refresh()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         window.makeKeyAndOrderFront(nil)
-        if !preview { toggle() }
+        if !preview && !permissionPreview && permissionSheet == nil { toggle() }
         return true
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { busy ? .terminateCancel : .terminateNow }
 
+    private func updatePermissionStatus() {
+        let granted = !permissionPreview && PermissionAccess.isGranted
+        permissionsButton.title = granted ? "Permissions…" : "Allow \(PermissionAccess.settingsName)…"
+        permissionsButton.toolTip = granted ? "Permission to disconnect GlobalProtect is enabled." : "Required to click Disconnect and read GlobalProtect’s status."
+    }
+    @objc private func showPermissions() {
+        guard permissionSheet == nil, !busy else { return }
+        let granted = !permissionPreview && PermissionAccess.isGranted
+        if !preview && !permissionPreview { UserDefaults.standard.set(true, forKey: PermissionAccess.onboardingKey) }
+        let alert = NSAlert()
+        alert.messageText = granted ? "GlobalProtect permissions" : "Allow \(PermissionAccess.settingsName)"
+        alert.informativeText = granted
+            ? "\(PermissionAccess.settingsName) is enabled. GlobalProtect Toggle can click Disconnect and read the client’s status."
+            : "GlobalProtect Toggle needs this permission to click Disconnect and read GlobalProtect’s connection status.\n\nOpen Privacy & Security → \(PermissionAccess.settingsName) and enable GlobalProtect Toggle. If it is missing, use + to add this app. Then return here and click the toggle.\n\nNo VPN or startup setting is changed during setup."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: granted ? "Done" : "Later")
+        permissionSheet = alert
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            self.permissionSheet = nil
+            if response == .alertFirstButtonReturn && !self.permissionPreview { PermissionAccess.requestAndOpenSettings() }
+            self.updatePermissionStatus()
+        }
+    }
     private func display(_ state: ServiceState) {
         subtitle.toolTip = nil
         status.stringValue = state.title
@@ -113,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     @objc private func toggle() {
-        guard !busy else { return }
+        guard !busy, permissionSheet == nil else { return }
         busy = true; button.isEnabled = false; startupCheckbox.isEnabled = false; progress.startAnimation(nil)
         status.stringValue = "Updating GlobalProtect…"
         DispatchQueue.global(qos: .userInitiated).async {

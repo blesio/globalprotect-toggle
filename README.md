@@ -4,7 +4,7 @@ Native AppKit macOS utility built from `global-protect.sh`.
 
 ## Run
 
-Open `build/GlobalProtect Toggle.app`. Each normal launch toggles GlobalProtect immediately:
+Open `build/GlobalProtect Toggle.app`. After first-run permission setup, normal launches toggle GlobalProtect immediately:
 
 - Either LaunchAgent loaded → request VPN disconnect, verify disconnected status, then unload pangps followed by pangpa.
 - Both unloaded → load pangpa, then pangps.
@@ -13,7 +13,21 @@ The compact window displays the status and provides a button to toggle again. Op
 
 The commands use the same `launchctl load -w` / `unload -w` calls and exact plist paths as the original script. They run as the logged-in user. No administrator helper is installed. State is checked in `gui/<uid>` before and after the operation. Failure to reach the requested loaded/unloaded state is shown in an error alert with command output. The persistent login preference is saved before these commands and restored afterward, including command failure paths.
 
-Turning off uses macOS Accessibility to invoke the installed GlobalProtect client’s Disconnect control. Allow GlobalProtect Toggle under System Settings → Privacy & Security → Accessibility on the first off operation, then retry. The utility waits up to 35 seconds for the client to show Not Connected or Disconnected. If permission is missing, the control is unavailable, or a reason/passcode prompt is pending, it reports the problem and leaves the agents loaded. Complete any GlobalProtect prompt manually, then retry. Turning on still loads only the LaunchAgents; GlobalProtect handles connection. This utility controls only the two LaunchAgents in the script; it does not change GlobalProtect's LaunchDaemon or system extension.
+Turning off uses macOS Accessibility to invoke the installed GlobalProtect client’s Disconnect control. On first run, the app offers permission setup before changing any services. Open System Settings and allow GlobalProtect Toggle under Privacy & Security → Device Control and Data Access on macOS 27, or Accessibility on older macOS versions. Return to the app and click the toggle. The utility waits up to 35 seconds for the client to show Not Connected or Disconnected. If permission is missing, the control is unavailable, or a reason/passcode prompt is pending, it reports the problem and leaves the agents loaded. Complete any GlobalProtect prompt manually, then retry. Turning on still loads only the LaunchAgents; GlobalProtect handles connection. This utility controls only the two LaunchAgents in the script; it does not change GlobalProtect's LaunchDaemon or system extension.
+
+## First-run permissions
+
+Install the app in its intended location (for example `/Applications`) before granting permission. On its first normal launch without permission, a setup sheet explains why access is needed and offers **Open System Settings** and **Later**. Opening Settings invokes Apple's accessibility permission request and opens the matching Privacy & Security pane. macOS 27 calls this permission **Device Control and Data Access**; older versions call it **Accessibility**.
+
+The user must approve access in System Settings. The app detects the grant and updates its Permissions button. Setup does not change the VPN state or login preference, and completing setup does not automatically toggle the VPN. Use the toggle when ready. If macOS has not picked up a new grant, quit and reopen the app. Users can reopen setup from the Permissions button or app menu if they deferred it or access was revoked.
+
+The utility does not update/delete other applications, so it does not request App Management. It does not require Full Disk Access, Input Monitoring, or Screen Recording. Ad-hoc-signed replacement builds may require the user to reauthorize the installed app.
+
+`--preview` suppresses automatic permission setup and service changes. To inspect the setup UI without saving the first-run flag or making a macOS permission request:
+
+```sh
+open -n 'build/GlobalProtect Toggle.app' --args --preview --permissions-preview
+```
 
 ## Run at login
 
@@ -52,11 +66,11 @@ The icon is derived from `/Applications/GlobalProtect.app/Contents/Resources/Pan
 Controller tests use simulated launchctl responses and do not change GlobalProtect:
 
 ```sh
-xcrun swiftc -swift-version 5 Sources/ServiceController.swift Sources/VPNDisconnector.swift Tests/main.swift -o build/controller-tests -framework AppKit
+xcrun swiftc -swift-version 5 Sources/ServiceController.swift Sources/VPNDisconnector.swift Sources/Permissions.swift Tests/main.swift -o build/controller-tests -framework AppKit
 ./build/controller-tests
 ```
 
-Checks cover start/stop ordering, both partial states, silent command failures, unavailable login sessions, missing plists, disconnect-before-unload ordering, failure preserving loaded agents, and disconnected-status recognition. Automated disconnect needs an interactive test with a running GlobalProtect client and Accessibility permission; this has not yet been verified live.
+Checks cover start/stop ordering, both partial states, silent command failures, unavailable login sessions, missing plists, disconnect-before-unload ordering, failure preserving loaded agents, disconnected-status recognition, first-run permission policy, and version-specific permission labels. Automated disconnect needs an interactive test with a running GlobalProtect client and Accessibility permission; this has not yet been verified live.
 
 
 Startup checks additionally cover rollback after a partial failure and preservation of enabled, disabled, and mixed settings across manual toggles. The following integration check uses two disposable sleep LaunchAgents and does not operate on GlobalProtect:

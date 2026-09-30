@@ -27,7 +27,7 @@ final class VPNDisconnector {
             AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
         }
         guard trusted else {
-            throw failure("Allow GlobalProtect Toggle in System Settings → Privacy & Security → Accessibility, then retry. This permission lets the utility click GlobalProtect’s Disconnect control and verify its status.")
+            throw failure("Allow GlobalProtect Toggle in System Settings → Privacy & Security → \(PermissionAccess.settingsName), then retry. This permission lets the utility click GlobalProtect’s Disconnect control and verify its status.")
         }
         // Opening an already running client shows its panel. A missing UI is opened so
         // a surviving PanGPS connection can still be disconnected normally.

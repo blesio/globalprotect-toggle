@@ -102,3 +102,11 @@ let absent = try ServiceController.disabledOverride("\"\(a[0].label).other\" => 
 check(absent == nil, "label substring matched")
 check((try? ServiceController.disabledOverride("\"\(a[0].label)\" => unknown", label: a[0].label)) == nil, "unknown output accepted")
 print("PASS: startup enable/disable, session unchanged, rollback and launchctl output formats")
+
+check(PermissionAccess.settingsName(majorVersion: 27) == "Device Control and Data Access", "wrong macOS 27 permission name")
+check(PermissionAccess.settingsName(majorVersion: 26) == "Accessibility", "wrong legacy permission name")
+check(PermissionAccess.needsFirstRunSetup(granted: false, presented: false, preview: false), "first run did not request permission")
+check(!PermissionAccess.needsFirstRunSetup(granted: true, presented: false, preview: false), "prompted with permission granted")
+check(!PermissionAccess.needsFirstRunSetup(granted: false, presented: true, preview: false), "first-run prompt repeated")
+check(!PermissionAccess.needsFirstRunSetup(granted: false, presented: false, preview: true), "preview requested permission")
+print("PASS: macOS permission names and first-run setup policy")
